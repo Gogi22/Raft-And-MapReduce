@@ -44,8 +44,9 @@ type ExampleReply struct {
 
 // Add your RPC definitions here.
 type TaskRequestReply struct {
-	Mapt    *MapTask
-	Reducet *ReduceTask
+	Mapt    		  *MapTask
+	Reducet 		*ReduceTask
+	Finished 		 bool
 }
 
 type MapDoneArgs struct {

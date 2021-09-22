@@ -22,6 +22,7 @@ type Master struct {
 	IntermediateFiles map[int][]string
 	ReduceTasks       map[int]int
 	nReduce           int
+	Finish            bool
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -49,6 +50,8 @@ func (m *Master) GetTask(args *Args, reply *TaskRequestReply) error {
 		fmt.Println(reply.Reducet, reduceTask)
 		return nil
 	}
+
+	reply.Finished = true
 
 	return nil
 }
@@ -144,23 +147,30 @@ func (m *Master) server() {
 	go http.Serve(l, nil)
 }
 
+func (m *Master) WorkersFinished(args *Args, reply *Reply) error {
+	m.Finish = true
+	return nil
+}
+
 //
 // main/mrmaster.go calls Done() periodically to find out
 // if the entire job has finished.
 //
 func (m *Master) Done() bool {
 	ret := false
-
 	// Your code here.
+	if m.Finish {
+		ret = true
+	}
 
 	return ret
 }
 
 //
 // create a Master.
-// main/mrmaster.go calls this function.
+// main/mrmaster.go calls this function.	
 // nReduce is the number of reduce tasks to use.
-//
+//	
 func MakeMaster(files []string, nReduce int) *Master {
 	m := Master{}
 
@@ -169,10 +179,10 @@ func MakeMaster(files []string, nReduce int) *Master {
 	m.MapTasks = make(map[string]int)
 	m.ReduceTasks = make(map[int]int)
 	m.IntermediateFiles = make(map[int][]string)
-	// for _, s := range files {
-	// 	m.MapTasks[s] = Unassigned
-	// }
-	m.MapTasks[files[0]] = Unassigned
+	for _, s := range files {
+		m.MapTasks[s] = Unassigned
+	}
+	// m.MapTasks[files[0]] = Unassigned
 	m.nReduce = nReduce
 	for i := 0; i < m.nReduce; i++ {
 		m.IntermediateFiles[i] = []string{}

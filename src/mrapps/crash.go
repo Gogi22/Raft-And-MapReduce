@@ -8,14 +8,17 @@ package main
 // go build -buildmode=plugin crash.go
 //
 
-import "../mr"
-import crand "crypto/rand"
-import "math/big"
-import "strings"
-import "os"
-import "sort"
-import "strconv"
-import "time"
+import (
+	crand "crypto/rand"
+	"math/big"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"../mr"
+)
 
 func maybeCrash() {
 	max := big.NewInt(1000)
@@ -32,7 +35,7 @@ func maybeCrash() {
 }
 
 func Map(filename string, contents string) []mr.KeyValue {
-	maybeCrash()
+	// maybeCrash()
 
 	kva := []mr.KeyValue{}
 	kva = append(kva, mr.KeyValue{"a", filename})

@@ -42,46 +42,40 @@ func ihash(key string) int {
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
-	// uncomment to send the Example RPC to the master.
-	// CallExample()
 	fmt.Println("starting up Worker")
 
-	task := GetTask()
+	StillWorking := true
 
-	// fmt.Println("got Result", task)
+	for StillWorking {
+		task := GetTask()
+		time.Sleep()
+		StillWorking = !task.Finished
+		fmt.Println(!task.Finished)
 
-	if task.Mapt != nil {
-		fmt.Println("starting Map and NReduce is", task.Mapt.NReduce)
-		files, err := RunMap(mapf, *task.Mapt)
+		if task.Mapt != nil {
+			fmt.Println("starting Map and NReduce is", task.Mapt.NReduce)
+			files, err := RunMap(mapf, *task.Mapt)
 
-		if err != nil {
-			fmt.Println("error in worker", err)
-			return
-		}
+			if err != nil {
+				return
+			}
 
-		fmt.Println(files)
+			MapFinishReply(task.Mapt.Filename, files)
+		} else if task.Reducet != nil {
 
-		args := MapDoneArgs{}
-		args.Filename = task.Mapt.Filename
-		args.IntermediateFiles = files
-		reply := MapDoneReply{}
+			fmt.Println("starting Reduce")
+			err := RunReduce(reducef, *task.Reducet)
+			if err != nil {
+				fmt.Println("Error in reduce is", err)
+				return
+			}
+			ReduceFinishReply(task.Reducet.ReduceId)
 
-		call("Master.MapFinish", args, &reply)
+		} 
 
-		return
-	} else if task.Reducet != nil {
-		fmt.Println("starting Reduce")
-		err := RunReduce(reducef, *task.Reducet)
-		if err != nil {
-			fmt.Println("Error in reduce is", err)
-			return
-		}
-		args := ReduceDoneArgs{}
-		args.ReduceId = task.Reducet.ReduceId
-		call("Master.ReduceFinish", &args, &ReduceDoneReply{})
-	} else {
-		return
 	}
+
+	call("Master.WorkersFinished", &Args{}, &Reply{})
 
 }
 
@@ -169,9 +163,24 @@ func RunMap(mapf func(string, string) []KeyValue, task MapTask) (map[int][]strin
 	return filenames, nil
 }
 
-//
-// example function to show how to make an RPC call to the master.
-//
+func MapFinishReply(filename string, files map[int][]string) error {
+	args := MapDoneArgs{}
+	args.Filename = filename
+	args.IntermediateFiles = files
+
+	reply := MapDoneReply{}
+	call("Master.MapFinish", args, &reply)
+
+	return nil
+}
+
+func ReduceFinishReply(ReduceId int) error {
+	args := ReduceDoneArgs{}
+	args.ReduceId = ReduceId
+	call("Master.ReduceFinish", &args, &ReduceDoneReply{})
+
+	return nil
+}
 
 func GetTask() TaskRequestReply {
 
