@@ -48,7 +48,6 @@ func Worker(mapf func(string, string) []KeyValue,
 
 	for StillWorking {
 		task := GetTask()
-		time.Sleep()
 		StillWorking = !task.Finished
 		fmt.Println(!task.Finished)
 
@@ -71,7 +70,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			}
 			ReduceFinishReply(task.Reducet.ReduceId)
 
-		} 
+		}
 
 	}
 

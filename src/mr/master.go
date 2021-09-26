@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/rpc"
 	"os"
+	"sync"
 )
 
 const (
@@ -23,11 +24,13 @@ type Master struct {
 	ReduceTasks       map[int]int
 	nReduce           int
 	Finish            bool
+	sync.Mutex
 }
 
 // Your code here -- RPC handlers for the worker to call.
 func (m *Master) GetTask(args *Args, reply *TaskRequestReply) error {
-
+	m.Lock()
+	defer m.Unlock()
 	mapTask := m.ChooceMapTask()
 
 	if mapTask != nil {
@@ -57,6 +60,8 @@ func (m *Master) GetTask(args *Args, reply *TaskRequestReply) error {
 }
 
 func (m *Master) MapFinish(args *MapDoneArgs, reply *MapDoneReply) error {
+	m.Lock()
+	defer m.Unlock()
 	m.MapTasks[args.Filename] = Finished
 
 	for i := 0; i < m.nReduce; i++ {
@@ -67,6 +72,8 @@ func (m *Master) MapFinish(args *MapDoneArgs, reply *MapDoneReply) error {
 }
 
 func (m *Master) ReduceFinish(task *ReduceTask, reply *Reply) error {
+	m.Lock()
+	defer m.Unlock()
 	m.ReduceTasks[task.ReduceId] = Finished
 	fmt.Println(task.ReduceId, "done")
 	return nil
@@ -148,6 +155,8 @@ func (m *Master) server() {
 }
 
 func (m *Master) WorkersFinished(args *Args, reply *Reply) error {
+	m.Lock()
+	defer m.Unlock()
 	m.Finish = true
 	return nil
 }
@@ -157,6 +166,8 @@ func (m *Master) WorkersFinished(args *Args, reply *Reply) error {
 // if the entire job has finished.
 //
 func (m *Master) Done() bool {
+	m.Lock()
+	defer m.Unlock()
 	ret := false
 	// Your code here.
 	if m.Finish {
