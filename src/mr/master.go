@@ -1,27 +1,34 @@
 package mr
 
 import (
-	"fmt"
+	// "fmt"
+
 	"log"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os"
 	"sync"
+	"time"
 )
 
 const (
-	Unassigned = 0
-	InProgress = 1
-	Finished   = 2
+	UNASSIGNED = 0
+	INPROGRESS = 1
+	FINISHED   = 2
 )
+
+type Condition struct {
+	startTime int64
+	state     int
+}
 
 type Master struct {
 	// Your definitions here.
 	MapTaskId         int
-	MapTasks          map[string]int
+	MapTasks          map[string]Condition
 	IntermediateFiles map[int][]string
-	ReduceTasks       map[int]int
+	ReduceTasks       map[int]Condition
 	nReduce           int
 	Finish            bool
 	sync.Mutex
@@ -35,8 +42,8 @@ func (m *Master) GetTask(args *Args, reply *TaskRequestReply) error {
 
 	if mapTask != nil {
 		reply.Mapt = mapTask
-		fmt.Println(reply.Mapt, mapTask)
-		fmt.Println("in master", reply.Reducet)
+		// fmt.Println(reply.Mapt, mapTask)
+		// fmt.Println("in master", reply.Reducet)
 		return nil
 	}
 
@@ -44,17 +51,20 @@ func (m *Master) GetTask(args *Args, reply *TaskRequestReply) error {
 		return nil
 	}
 
-	fmt.Println("maps are done")
+	// fmt.Println("maps are done")
 
 	reduceTask := m.ChooseReduceTask()
 
 	if reduceTask != nil {
 		reply.Reducet = reduceTask
-		fmt.Println(reply.Reducet, reduceTask)
+		// fmt.Println(reply.Reducet, reduceTask)
 		return nil
 	}
 
-	reply.Finished = true
+	if m.ReduceStageDone() {
+		reply.Finished = true
+		m.Finish = true
+	}
 
 	return nil
 }
@@ -62,20 +72,20 @@ func (m *Master) GetTask(args *Args, reply *TaskRequestReply) error {
 func (m *Master) MapFinish(args *MapDoneArgs, reply *MapDoneReply) error {
 	m.Lock()
 	defer m.Unlock()
-	m.MapTasks[args.Filename] = Finished
+	m.MapTasks[args.Filename] = Condition{0, FINISHED}
 
 	for i := 0; i < m.nReduce; i++ {
 		m.IntermediateFiles[i] = append(m.IntermediateFiles[i], args.IntermediateFiles[i]...)
 	}
-	fmt.Println(m.IntermediateFiles)
+	// fmt.Println(m.IntermediateFiles)
 	return nil
 }
 
 func (m *Master) ReduceFinish(task *ReduceTask, reply *Reply) error {
 	m.Lock()
 	defer m.Unlock()
-	m.ReduceTasks[task.ReduceId] = Finished
-	fmt.Println(task.ReduceId, "done")
+	m.ReduceTasks[task.ReduceId] = Condition{0, FINISHED}
+	// fmt.Println(task.ReduceId, "done")
 	return nil
 }
 
@@ -87,13 +97,13 @@ func (m *Master) ReduceFinish(task *ReduceTask, reply *Reply) error {
 func (m *Master) ChooceMapTask() *MapTask {
 	var task *MapTask = nil
 
-	for i, f := range m.MapTasks {
-		if f == Unassigned {
+	for i, c := range m.MapTasks {
+		if c.state == UNASSIGNED {
 			task = &MapTask{}
 			task.Filename = i
 			task.TaskId = m.MapTaskId
 			task.NReduce = m.nReduce
-			m.MapTasks[i] = InProgress
+			m.MapTasks[i] = Condition{time.Now().Unix(), INPROGRESS}
 			m.MapTaskId++
 			break
 		}
@@ -103,15 +113,15 @@ func (m *Master) ChooceMapTask() *MapTask {
 
 func (m *Master) ChooseReduceTask() *ReduceTask {
 	var task *ReduceTask = nil
-	fmt.Println("choosing reduce task", m.ReduceTasks)
+	// fmt.Println("choosing reduce task", m.ReduceTasks)
 
-	for i, j := range m.ReduceTasks {
-		if j == Unassigned {
-			fmt.Println("reduce id", j)
+	for i, c := range m.ReduceTasks {
+		if c.state == UNASSIGNED {
+			// fmt.Println("reduce id", j)
 			task = &ReduceTask{}
 			task.ReduceId = i
 			task.IntermediateFiles = m.IntermediateFiles[i]
-			m.ReduceTasks[i] = InProgress
+			m.ReduceTasks[i] = Condition{time.Now().Unix(), INPROGRESS}
 			break
 		}
 	}
@@ -121,7 +131,16 @@ func (m *Master) ChooseReduceTask() *ReduceTask {
 
 func (m *Master) MapStageDone() bool {
 	for _, mp := range m.MapTasks {
-		if mp != Finished {
+		if mp.state != FINISHED {
+			return false
+		}
+	}
+	return true
+}
+
+func (m *Master) ReduceStageDone() bool {
+	for _, redc := range m.ReduceTasks {
+		if redc.state != FINISHED {
 			return false
 		}
 	}
@@ -154,52 +173,61 @@ func (m *Master) server() {
 	go http.Serve(l, nil)
 }
 
-func (m *Master) WorkersFinished(args *Args, reply *Reply) error {
-	m.Lock()
-	defer m.Unlock()
-	m.Finish = true
-	return nil
-}
+// func (m *Master) WorkersFinished() {
+// 	m.Finish = true
+// }
 
 //
 // main/mrmaster.go calls Done() periodically to find out
-// if the entire job has finished.
+// if the entire job has FINISHED.
 //
-func (m *Master) Done() bool {
-	m.Lock()
-	defer m.Unlock()
-	ret := false
-	// Your code here.
-	if m.Finish {
-		ret = true
+func (m *Master) CheckIfCrashed() {
+	for i, mp := range m.MapTasks {
+		if mp.state == INPROGRESS && mp.startTime+10 < time.Now().Unix() {
+			m.MapTasks[i] = Condition{0, UNASSIGNED}
+		}
 	}
 
-	return ret
+	for i, redc := range m.ReduceTasks {
+		if redc.state == INPROGRESS && redc.startTime+10 < time.Now().Unix() {
+			m.ReduceTasks[i] = Condition{0, UNASSIGNED}
+		}
+	}
+}
+
+func (m *Master) Done() bool {
+	// Your code here.
+	m.Lock()
+	defer m.Unlock()
+	if m.Finish {
+		return true
+	}
+	m.CheckIfCrashed()
+	return false
 }
 
 //
 // create a Master.
-// main/mrmaster.go calls this function.	
+// main/mrmaster.go calls this function.
 // nReduce is the number of reduce tasks to use.
-//	
+//
 func MakeMaster(files []string, nReduce int) *Master {
 	m := Master{}
 
 	// Your code here.
 	m.MapTaskId = 1
-	m.MapTasks = make(map[string]int)
-	m.ReduceTasks = make(map[int]int)
+	m.MapTasks = make(map[string]Condition)
+	m.ReduceTasks = make(map[int]Condition)
 	m.IntermediateFiles = make(map[int][]string)
 	for _, s := range files {
-		m.MapTasks[s] = Unassigned
+		m.MapTasks[s] = Condition{0, UNASSIGNED}
 	}
 	// m.MapTasks[files[0]] = Unassigned
 	m.nReduce = nReduce
 	for i := 0; i < m.nReduce; i++ {
 		m.IntermediateFiles[i] = []string{}
-		m.ReduceTasks[i] = 0
+		m.ReduceTasks[i] = Condition{0, UNASSIGNED}
 	}
-
 	m.server()
 	return &m
 }

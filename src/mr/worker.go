@@ -42,17 +42,16 @@ func ihash(key string) int {
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
-	fmt.Println("starting up Worker")
-
+	// fmt.Println("Starting up Worker")
 	StillWorking := true
 
 	for StillWorking {
 		task := GetTask()
 		StillWorking = !task.Finished
-		fmt.Println(!task.Finished)
+		// fmt.Println(!task.Finished, task.Mapt == nil, task.Reducet == nil)
 
 		if task.Mapt != nil {
-			fmt.Println("starting Map and NReduce is", task.Mapt.NReduce)
+			// fmt.Println("starting Map ")
 			files, err := RunMap(mapf, *task.Mapt)
 
 			if err != nil {
@@ -60,9 +59,8 @@ func Worker(mapf func(string, string) []KeyValue,
 			}
 
 			MapFinishReply(task.Mapt.Filename, files)
-		} else if task.Reducet != nil {
-
-			fmt.Println("starting Reduce")
+		} else if task.Reducet != nil {	
+			// fmt.Println("starting Reduce")
 			err := RunReduce(reducef, *task.Reducet)
 			if err != nil {
 				fmt.Println("Error in reduce is", err)
@@ -71,11 +69,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			ReduceFinishReply(task.Reducet.ReduceId)
 
 		}
-
 	}
-
-	call("Master.WorkersFinished", &Args{}, &Reply{})
-
 }
 
 func RunReduce(reducef func(string, []string) string, task ReduceTask) error {
@@ -115,21 +109,22 @@ func RunReduce(reducef func(string, []string) string, task ReduceTask) error {
 		for k := i; k < j; k++ {
 			values = append(values, kva[k].Value)
 		}
+		// fmt.Println("Starting Reduce")
 		output := reducef(kva[i].Key, values)
 
 		// this is the correct format for each line of Reduce output.
 		fmt.Fprintf(ofile, "%v %v\n", kva[i].Key, output)
-
+		// fmt.Println("Finishing Reduce")
 		i = j
 	}
 	ofile.Close()
 
-	os.Rename(ofile.Name(), fmt.Sprintf("../main/mr-out-%d.txt", task.ReduceId))
+	os.Rename(ofile.Name(), fmt.Sprintf("mr-out-%d.txt", task.ReduceId))
 	return nil
 }
 
 func RunMap(mapf func(string, string) []KeyValue, task MapTask) (map[int][]string, error) {
-	file, err := os.Open("../main/" + task.Filename)
+	file, err := os.Open(task.Filename)
 	if err != nil {
 		log.Fatalf("cannot open %v", task.Filename)
 	}
@@ -183,7 +178,7 @@ func ReduceFinishReply(ReduceId int) error {
 
 func GetTask() TaskRequestReply {
 
-	fmt.Println("calling master for Task")
+	// fmt.Println("calling master for Task")
 	args := Args{}
 	reply := TaskRequestReply{}
 
