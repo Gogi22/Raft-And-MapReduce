@@ -1,8 +1,6 @@
 package mr
 
 import (
-	// "fmt"
-
 	"log"
 	"net"
 	"net/http"
@@ -24,7 +22,6 @@ type Condition struct {
 }
 
 type Master struct {
-	// Your definitions here.
 	MapTaskId         int
 	MapTasks          map[string]Condition
 	IntermediateFiles map[int][]string
@@ -34,7 +31,6 @@ type Master struct {
 	sync.Mutex
 }
 
-// Your code here -- RPC handlers for the worker to call.
 func (m *Master) GetTask(args *Args, reply *TaskRequestReply) error {
 	m.Lock()
 	defer m.Unlock()
@@ -42,8 +38,6 @@ func (m *Master) GetTask(args *Args, reply *TaskRequestReply) error {
 
 	if mapTask != nil {
 		reply.Mapt = mapTask
-		// fmt.Println(reply.Mapt, mapTask)
-		// fmt.Println("in master", reply.Reducet)
 		return nil
 	}
 
@@ -51,13 +45,10 @@ func (m *Master) GetTask(args *Args, reply *TaskRequestReply) error {
 		return nil
 	}
 
-	// fmt.Println("maps are done")
-
 	reduceTask := m.ChooseReduceTask()
 
 	if reduceTask != nil {
 		reply.Reducet = reduceTask
-		// fmt.Println(reply.Reducet, reduceTask)
 		return nil
 	}
 
@@ -77,7 +68,6 @@ func (m *Master) MapFinish(args *MapDoneArgs, reply *MapDoneReply) error {
 	for i := 0; i < m.nReduce; i++ {
 		m.IntermediateFiles[i] = append(m.IntermediateFiles[i], args.IntermediateFiles[i]...)
 	}
-	// fmt.Println(m.IntermediateFiles)
 	return nil
 }
 
@@ -85,15 +75,9 @@ func (m *Master) ReduceFinish(task *ReduceTask, reply *Reply) error {
 	m.Lock()
 	defer m.Unlock()
 	m.ReduceTasks[task.ReduceId] = Condition{0, FINISHED}
-	// fmt.Println(task.ReduceId, "done")
 	return nil
 }
 
-//
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//code here -- RPC handlers for the worker to call.
 func (m *Master) ChooceMapTask() *MapTask {
 	var task *MapTask = nil
 
@@ -113,11 +97,9 @@ func (m *Master) ChooceMapTask() *MapTask {
 
 func (m *Master) ChooseReduceTask() *ReduceTask {
 	var task *ReduceTask = nil
-	// fmt.Println("choosing reduce task", m.ReduceTasks)
 
 	for i, c := range m.ReduceTasks {
 		if c.state == UNASSIGNED {
-			// fmt.Println("reduce id", j)
 			task = &ReduceTask{}
 			task.ReduceId = i
 			task.IntermediateFiles = m.IntermediateFiles[i]
@@ -148,16 +130,6 @@ func (m *Master) ReduceStageDone() bool {
 }
 
 //
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func (m *Master) Example(args *ExampleArgs, reply *ExampleReply) error {
-	reply.Y = args.X + 1
-	return nil
-}
-
-//
 // start a thread that listens for RPCs from worker.go
 //
 func (m *Master) server() {
@@ -173,11 +145,6 @@ func (m *Master) server() {
 	go http.Serve(l, nil)
 }
 
-// func (m *Master) WorkersFinished() {
-// 	m.Finish = true
-// }
-
-//
 // main/mrmaster.go calls Done() periodically to find out
 // if the entire job has FINISHED.
 //
@@ -196,7 +163,6 @@ func (m *Master) CheckIfCrashed() {
 }
 
 func (m *Master) Done() bool {
-	// Your code here.
 	m.Lock()
 	defer m.Unlock()
 	if m.Finish {
@@ -214,7 +180,6 @@ func (m *Master) Done() bool {
 func MakeMaster(files []string, nReduce int) *Master {
 	m := Master{}
 
-	// Your code here.
 	m.MapTaskId = 1
 	m.MapTasks = make(map[string]Condition)
 	m.ReduceTasks = make(map[int]Condition)
@@ -222,7 +187,6 @@ func MakeMaster(files []string, nReduce int) *Master {
 	for _, s := range files {
 		m.MapTasks[s] = Condition{0, UNASSIGNED}
 	}
-	// m.MapTasks[files[0]] = Unassigned
 	m.nReduce = nReduce
 	for i := 0; i < m.nReduce; i++ {
 		m.IntermediateFiles[i] = []string{}

@@ -16,10 +16,6 @@ import (
 // and reply for an RPC.
 //
 
-type ExampleArgs struct {
-	X int
-}
-
 type Args struct {
 }
 
@@ -38,11 +34,6 @@ type ReduceTask struct {
 type Reply struct {
 }
 
-type ExampleReply struct {
-	Y int
-}
-
-// Add your RPC definitions here.
 type TaskRequestReply struct {
 	Mapt    		  *MapTask
 	Reducet 		*ReduceTask

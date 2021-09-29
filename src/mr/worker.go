@@ -42,16 +42,13 @@ func ihash(key string) int {
 func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
-	// fmt.Println("Starting up Worker")
 	StillWorking := true
 
 	for StillWorking {
 		task := GetTask()
 		StillWorking = !task.Finished
-		// fmt.Println(!task.Finished, task.Mapt == nil, task.Reducet == nil)
 
 		if task.Mapt != nil {
-			// fmt.Println("starting Map ")
 			files, err := RunMap(mapf, *task.Mapt)
 
 			if err != nil {
@@ -59,15 +56,13 @@ func Worker(mapf func(string, string) []KeyValue,
 			}
 
 			MapFinishReply(task.Mapt.Filename, files)
-		} else if task.Reducet != nil {	
-			// fmt.Println("starting Reduce")
+		} else if task.Reducet != nil {
 			err := RunReduce(reducef, *task.Reducet)
 			if err != nil {
 				fmt.Println("Error in reduce is", err)
 				return
 			}
 			ReduceFinishReply(task.Reducet.ReduceId)
-
 		}
 	}
 }
@@ -91,7 +86,6 @@ func RunReduce(reducef func(string, []string) string, task ReduceTask) error {
 
 	sort.Sort(ByKey(kva))
 
-	// oname := "mr-out-0"
 	oname := "temp-*"
 	ofile, err := ioutil.TempFile("./", oname)
 
@@ -109,12 +103,10 @@ func RunReduce(reducef func(string, []string) string, task ReduceTask) error {
 		for k := i; k < j; k++ {
 			values = append(values, kva[k].Value)
 		}
-		// fmt.Println("Starting Reduce")
 		output := reducef(kva[i].Key, values)
 
 		// this is the correct format for each line of Reduce output.
 		fmt.Fprintf(ofile, "%v %v\n", kva[i].Key, output)
-		// fmt.Println("Finishing Reduce")
 		i = j
 	}
 	ofile.Close()
@@ -178,32 +170,12 @@ func ReduceFinishReply(ReduceId int) error {
 
 func GetTask() TaskRequestReply {
 
-	// fmt.Println("calling master for Task")
 	args := Args{}
 	reply := TaskRequestReply{}
 
 	call("Master.GetTask", &args, &reply)
 
 	return reply
-}
-
-// the RPC argument and reply types are defined in rpc.go.
-//
-func CallExample() {
-
-	// declare an argument structure.
-	args := ExampleArgs{}
-
-	// fill in the argument(s).
-	args.X = 99
-
-	// declare a reply structure.
-	reply := ExampleReply{}
-	// send the RPC request, wait for the reply.
-	call("Master.Example", &args, &reply)
-
-	// reply.Y should be 100.
-	fmt.Printf("reply.Y %v\n", reply.Y)
 }
 
 //
