@@ -27,8 +27,9 @@ import (
 )
 
 const (
-	ElectionTime  = 1000
+	ElectionTime  = 1300
 	HeartbeatTime = 130
+	Spread        = 700
 )
 
 // import "bytes"
@@ -72,10 +73,12 @@ type Raft struct {
 	state       State
 	votedFor    int
 	timerStart  time.Time
+	waitTime    time.Duration
 }
 
 type AppendEntryArgs struct {
-	Term int
+	Term     int
+	LeaderId int
 }
 
 type AppendEntryReply struct {
@@ -153,11 +156,29 @@ type RequestVoteReply struct {
 	Granted bool
 }
 
+func GenerateSeed() *rand.Rand {
+	s1 := rand.NewSource(time.Now().UnixNano())
+	r1 := rand.New(s1)
+	return r1
+}
+
 func (rf *Raft) BecomeFollower(term int) {
+	r1 := GenerateSeed()
 	rf.state = Follower
 	rf.currentTerm = term
+	rf.waitTime = time.Duration(ElectionTime+r1.Intn(Spread)) * time.Millisecond
 	rf.timerStart = time.Now()
 	rf.votedFor = -1
+}
+
+func (rf *Raft) BecomeCandidate() {
+	r1 := GenerateSeed()
+	rf.currentTerm += 1
+	rf.votedFor = rf.me
+	rf.state = Candidate
+	rf.waitTime = time.Duration(ElectionTime+r1.Intn(Spread)) * time.Millisecond
+	rf.timerStart = time.Now()
+
 }
 
 func (rf *Raft) BecomeLeader() {
@@ -171,13 +192,14 @@ func (rf *Raft) BecomeLeader() {
 func (rf *Raft) HeartbeatTicker() {
 	for {
 		rf.mu.Lock()
-		if rf.state != Leader {
+		if rf.state != Leader && rf.killed() {
 			rf.mu.Unlock()
 			return
 		}
-		go rf.SendHeartbeats()
 		rf.mu.Unlock()
+		go rf.SendHeartbeats()
 		time.Sleep(HeartbeatTime * time.Millisecond)
+
 	}
 }
 
@@ -200,41 +222,35 @@ func (rf *Raft) SendHeartbeats() {
 			rf.mu.Unlock()
 
 			DPrintf("[%d] sending AE to %d with Term %d", rf.me, server, term)
-			_ = rf.CallAppendEntry(server, term)
+			rf.CallAppendEntry(server, term, rf.me)
 
 		}(server)
 	}
 }
 
-func (rf *Raft) CallAppendEntry(server int, term int) bool {
+func (rf *Raft) CallAppendEntry(server int, term int, leader int) {
 	args := AppendEntryArgs{
-		Term: term,
+		Term:     term,
+		LeaderId: leader,
 	}
 	var reply AppendEntryReply
 
 	ok := rf.sendAppendEntry(server, &args, &reply)
 
 	if !ok {
-		return false
+		return
 	}
-
-	if reply.Success {
-		return true
-	}
-
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if reply.Term > rf.currentTerm {
 		rf.BecomeFollower(reply.Term)
 	}
-
-	return false
-
 }
 
-func (rf *Raft) ReplyAppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
+func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	DPrintf("[%d] Recieved Append Entry from (%d)", rf.me, args.LeaderId)
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.Success = false
@@ -243,21 +259,19 @@ func (rf *Raft) ReplyAppendEntry(args *AppendEntryArgs, reply *AppendEntryReply)
 
 	reply.Success = true
 	rf.BecomeFollower(args.Term)
-	// DPrintf("[%d] after AE my term is %d ", rf.me, rf.currentTerm)
 }
 
 func (rf *Raft) ElectionTicker() {
-	s1 := rand.NewSource(time.Now().UnixNano())
-	r1 := rand.New(s1)
-
-	waitTime := time.Duration(ElectionTime+r1.Intn(500)) * time.Millisecond
-	DPrintf("for %d waitTime is %d ", rf.me, waitTime)
 	for {
+		if rf.killed() {
+			return
+		}
 		rf.mu.Lock()
-		if rf.state != Leader && time.Since(rf.timerStart) > waitTime {
+		if rf.state != Leader && time.Since(rf.timerStart) > rf.waitTime {
 			go rf.AttempElection()
+			r1 := GenerateSeed()
+			rf.waitTime = time.Duration(ElectionTime+r1.Intn(Spread)) * time.Millisecond
 			rf.timerStart = time.Now()
-			waitTime = time.Duration(ElectionTime+r1.Intn(500)) * time.Millisecond
 		}
 		rf.mu.Unlock()
 		time.Sleep(10 * time.Millisecond)
@@ -269,15 +283,16 @@ func (rf *Raft) ElectionTicker() {
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
-	DPrintf("[%d] recieved requestVote from %d  with term - %d and my was - %d", rf.me, args.CandidateId, args.Term, rf.currentTerm)
 	defer rf.mu.Unlock()
+	DPrintf("[%d] recieved RequestVote from (%d) with the Term of -- %d and my Term %d, and I'have voted for %d", rf.me, args.CandidateId, args.Term, rf.currentTerm, rf.votedFor)
 	if args.Term < rf.currentTerm {
 		reply.Granted = false
 		reply.Term = rf.currentTerm
 		return
 	}
 
-	if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
+	// Not Sure about third comparison
+	if rf.votedFor == -1 || rf.votedFor == args.CandidateId || args.Term > rf.currentTerm {
 		rf.votedFor = args.CandidateId
 		reply.Granted = true
 		reply.Term = args.Term
@@ -287,9 +302,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 func (rf *Raft) AttempElection() {
 	rf.mu.Lock()
-	rf.currentTerm += 1
-	rf.votedFor = rf.me
-	rf.state = Candidate
+	rf.BecomeCandidate()
 	term := rf.currentTerm
 	count := 1
 	rf.mu.Unlock()
@@ -299,7 +312,7 @@ func (rf *Raft) AttempElection() {
 			continue
 		}
 		go func(server int) {
-			DPrintf("[%d] CallRequestVote to %d", rf.me, server)
+			DPrintf("[%d] requests vote from - %d with the Term of -- %d", rf.me, server, term)
 			voteGranted := rf.CallRequestVote(server, term)
 			if !voteGranted {
 				return
@@ -307,6 +320,7 @@ func (rf *Raft) AttempElection() {
 
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
+			DPrintf("[%d] recieved vote from - %d", rf.me, server)
 			count += 1
 			if rf.state != Candidate {
 				return
@@ -329,8 +343,7 @@ func (rf *Raft) CallRequestVote(server int, term int) bool {
 	ok := rf.sendRequestVote(server, &args, &reply)
 
 	if !ok {
-		DPrintf("respons from RequestVote was not ok")
-		return false // maybe keep sending
+		return false
 	}
 
 	if reply.Granted {
@@ -375,12 +388,14 @@ func (rf *Raft) CallRequestVote(server int, term int) bool {
 // the struct itself.
 //
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
+	DPrintf("About to Send a RPC Call for RequestVote to server %d from server %d", server, args.CandidateId)
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
+	DPrintf("Sent a RPC Call for RequestVote to server %d from server %d and recieved %v", server, args.CandidateId, ok)
 	return ok
 }
 
 func (rf *Raft) sendAppendEntry(server int, args *AppendEntryArgs, reply *AppendEntryReply) bool {
-	ok := rf.peers[server].Call("Raft.ReplyAppendEntry", args, reply)
+	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	return ok
 }
 
@@ -442,7 +457,8 @@ func (rf *Raft) killed() bool {
 //
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
-	DPrintf("created peer %d", me)
+	DPrintf("Created Peer %d", me)
+	r1 := GenerateSeed()
 
 	rf := &Raft{}
 	rf.peers = peers
@@ -450,6 +466,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 	rf.currentTerm = 0
 	rf.votedFor = -1
+	rf.waitTime = time.Duration(ElectionTime+r1.Intn(Spread)) * time.Millisecond
 	rf.timerStart = time.Now()
 	rf.state = Candidate
 	// Your initialization code here (2A, 2B, 2C).
