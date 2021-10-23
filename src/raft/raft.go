@@ -27,9 +27,9 @@ import (
 )
 
 const (
-	ElectionTime  = 1400
-	HeartbeatTime = 200
-	Spread        = 700
+	ElectionTime  = 1300
+	HeartbeatTime = 130
+	Spread        = 500
 )
 
 // import "bytes"
@@ -270,6 +270,7 @@ func (rf *Raft) SendHeartbeats() {
 				return
 			}
 
+			DPrintf("[%d] sending AE to %d with Term %d", rf.me, server, rf.currentTerm)
 			rf.mu.Unlock()
 			rf.CallAppendEntry(server)
 
@@ -324,8 +325,8 @@ func (rf *Raft) CallAppendEntry(server int) {
 	rf.mu.Lock()
 	args := rf.GetPrevLog(server)
 	// if args.Entry.Command != nil {
-	DPrintf("[%d] sending AE to %d, with args = %+v", rf.me, server, args)
-	DPrintf("me - %+v, log - %+v, commitIndex - %+v, lastApplied - %+v, nextIndex %+v, matchIndex %+v", rf.me, rf.log, rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex)
+	// DPrintf("[%d] sending AE to %d, with args = %+v", rf.me, server, args)
+	// DPrintf("me - %+v, log - %+v, commitIndex - %+v, lastApplied - %+v, nextIndex %+v, matchIndex %+v", rf.me, rf.log, rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex)
 	// }
 	rf.mu.Unlock()
 	ok := rf.sendAppendEntry(server, &args, &reply)
@@ -349,6 +350,7 @@ func (rf *Raft) CallAppendEntry(server int) {
 func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	DPrintf("(%d) Recieved Append Entry from [%d]", rf.me, args.LeaderId)
 	// DPrintf("[%d] Recieved Append Entry from (%d), args is %v", rf.me, args.LeaderId, args)
 	reply.Term = rf.currentTerm
 	reply.Success = false
@@ -381,7 +383,7 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 		rf.applyCh <- applyMsg
 	}
 
-	DPrintf("(%d) recieved AE from [%d] and now my log is %v and commitIndex is %d ", rf.me, args.LeaderId, rf.log, rf.commitIndex)
+	DPrintf("(%d) recieved AE from [%d] and now my log is and commitIndex is %d ", rf.me, args.LeaderId, rf.commitIndex)
 	reply.Success = true
 	rf.BecomeFollower(args.Term)
 }
@@ -409,6 +411,7 @@ func (rf *Raft) ElectionTicker() {
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	DPrintf("(%d) recieved RequestVote from [%d] with the Term of -- %d and my Term %d, and I'have voted for %d", rf.me, args.CandidateId, args.Term, rf.currentTerm, rf.votedFor)
 	// DPrintf("[%d] recieved RequestVote from (%d) with the Term of -- %d and my Term %d, and I'have voted for %d", rf.me, args.CandidateId, args.Term, rf.currentTerm, rf.votedFor)
 	reply.Granted = false
 	reply.Term = rf.currentTerm
@@ -417,7 +420,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	// or args.LastLogTerm >= rf.log[len(rf.log)-1].Term
-	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId) && args.Term > rf.currentTerm && (args.LastLogIndex > len(rf.log)-1 || args.LastLogIndex == len(rf.log)-1 && args.LastLogTerm == rf.log[len(rf.log)-1].Term) {
+	if args.LastLogIndex >= len(rf.log)-1 && (rf.votedFor == -1 || rf.votedFor == args.CandidateId || args.Term > rf.currentTerm) {
 		rf.BecomeFollower(args.Term)
 		rf.votedFor = args.CandidateId
 		reply.Granted = true
@@ -430,7 +433,7 @@ func (rf *Raft) AttempElection() {
 	rf.mu.Lock()
 	rf.BecomeCandidate()
 	count := 1
-	done := false
+	term := rf.currentTerm
 	rf.mu.Unlock()
 
 	for server := range rf.peers {
@@ -438,7 +441,8 @@ func (rf *Raft) AttempElection() {
 			continue
 		}
 		go func(server int) {
-			DPrintf("[%d] requests vote from - %d", rf.me, server)
+			DPrintf("[%d] requests vote from - %d with the Term of -- %d", rf.me, server, term)
+			// DPrintf("[%d] requests vote from - %d", rf.me, server)
 			voteGranted := rf.CallRequestVote(server)
 			if !voteGranted {
 				return
@@ -446,16 +450,12 @@ func (rf *Raft) AttempElection() {
 
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
-			if done {
-				return
-			}
 			DPrintf("[%d] recieved vote from - %d", rf.me, server)
-			count++
 			if rf.state != Candidate {
 				return
 			}
+			count++
 			if count >= len(rf.peers)/2+1 {
-				done = true
 				rf.BecomeLeader()
 			}
 
@@ -556,7 +556,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		return index, term, false
 	}
 
-	DPrintf("START - [%d] recieved command - %+v", rf.me, command)
+	DPrintf("START - [%d] recieved command", rf.me)
 	term = rf.currentTerm
 	index = len(rf.log)
 
