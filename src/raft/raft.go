@@ -206,7 +206,6 @@ func (rf *Raft) BecomeCandidate() {
 	rf.state = Candidate
 	rf.waitTime = time.Duration(ElectionTime+r1.Intn(Spread)) * time.Millisecond
 	rf.timerStart = time.Now()
-
 }
 
 func (rf *Raft) BecomeLeader() {
@@ -239,14 +238,14 @@ func (rf *Raft) HeartbeatTicker() {
 	}
 }
 
-func (rf *Raft) GetPrevLog(server int) AppendEntryArgs {
+func (rf *Raft) GetPrevLog(server, term int) AppendEntryArgs {
 	var entry LogEntry
 	if rf.matchIndex[server]+1 == rf.nextIndex[server] && rf.nextIndex[server] <= len(rf.log)-1 {
 		entry = rf.log[rf.nextIndex[server]]
 	}
 
 	args := AppendEntryArgs{
-		Term:         rf.currentTerm,
+		Term:         term,
 		LeaderId:     rf.me,
 		PrevLogIndex: rf.log[rf.nextIndex[server]-1].Index,
 		PrevLogTerm:  rf.log[rf.nextIndex[server]-1].Term,
@@ -258,6 +257,9 @@ func (rf *Raft) GetPrevLog(server int) AppendEntryArgs {
 }
 
 func (rf *Raft) SendHeartbeats() {
+	rf.mu.Lock()
+	term := rf.currentTerm
+	rf.mu.Unlock()
 	for server := range rf.peers {
 		if server == rf.me {
 			continue
@@ -272,7 +274,7 @@ func (rf *Raft) SendHeartbeats() {
 
 			DPrintf("[%d] sending AE to %d with Term %d", rf.me, server, rf.currentTerm)
 			rf.mu.Unlock()
-			rf.CallAppendEntry(server)
+			rf.CallAppendEntry(server, term)
 
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
@@ -320,10 +322,10 @@ func (rf *Raft) SendHeartbeats() {
 	}
 }
 
-func (rf *Raft) CallAppendEntry(server int) {
+func (rf *Raft) CallAppendEntry(server, term int) {
 	var reply AppendEntryReply
 	rf.mu.Lock()
-	args := rf.GetPrevLog(server)
+	args := rf.GetPrevLog(server, term)
 	if args.Entry.Command != nil {
 		DPrintf("[%d] sending AE to %d, with args = %+v", rf.me, server, args)
 		DPrintf("me - %+v, log - %+v, commitIndex - %+v, lastApplied - %+v, nextIndex %+v, matchIndex %+v", rf.me, rf.log, rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex)
@@ -369,6 +371,10 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 		DPrintf("(%d) rf.log[args.PrevLogIndex].Term != args.PrevLogTerm", rf.me)
 		rf.log = rf.log[:args.PrevLogIndex]
 		return
+	}
+
+	if args.Entry.Index > 0 && len(rf.log)-1 >= args.Entry.Index {
+		rf.log = rf.log[:args.Entry.Index]
 	}
 
 	// if len(rf.log)-1 == args.Entry.Index {
@@ -428,7 +434,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	// or args.LastLogTerm >= rf.log[len(rf.log)-1].Term
-	if args.LastLogIndex >= len(rf.log)-1 && (rf.votedFor == -1 || rf.votedFor == args.CandidateId || args.Term > rf.currentTerm) {
+	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId || args.Term > rf.currentTerm) && args.LastLogIndex >= len(rf.log)-1 {
 		rf.BecomeFollower(args.Term)
 		rf.votedFor = args.CandidateId
 		reply.Granted = true
