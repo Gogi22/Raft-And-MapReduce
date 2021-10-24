@@ -27,9 +27,9 @@ import (
 )
 
 const (
-	ElectionTime  = 1300
-	HeartbeatTime = 130
-	Spread        = 500
+	ElectionTime  = 950
+	HeartbeatTime = 150
+	Spread        = 250
 )
 
 // import "bytes"
@@ -228,7 +228,7 @@ func (rf *Raft) BecomeLeader() {
 func (rf *Raft) HeartbeatTicker() {
 	for {
 		rf.mu.Lock()
-		if rf.state != Leader && rf.killed() {
+		if rf.state != Leader || rf.killed() {
 			rf.mu.Unlock()
 			return
 		}
@@ -282,20 +282,20 @@ func (rf *Raft) SendHeartbeats() {
 			}
 
 			idx := 0
-			maxCount := 0
 			for i := range rf.matchIndex {
-				cnt := 1
+				cnt := 0
+				if i == rf.me {
+					continue
+				}
 				for j := range rf.matchIndex {
-					if i != j && rf.matchIndex[i] == rf.matchIndex[j] {
+					if rf.me != j && rf.matchIndex[i] == rf.matchIndex[j] {
 						cnt++
 					}
 				}
 				if cnt > len(rf.peers)/2 {
 					idx = rf.matchIndex[i]
 					break
-				}
-				if maxCount < cnt {
-					maxCount = 0
+				} else if cnt == len(rf.peers)/2 && rf.matchIndex[i] > idx {
 					idx = rf.matchIndex[i]
 				}
 			}
@@ -324,10 +324,10 @@ func (rf *Raft) CallAppendEntry(server int) {
 	var reply AppendEntryReply
 	rf.mu.Lock()
 	args := rf.GetPrevLog(server)
-	// if args.Entry.Command != nil {
-	// DPrintf("[%d] sending AE to %d, with args = %+v", rf.me, server, args)
-	// DPrintf("me - %+v, log - %+v, commitIndex - %+v, lastApplied - %+v, nextIndex %+v, matchIndex %+v", rf.me, rf.log, rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex)
-	// }
+	if args.Entry.Command != nil {
+		DPrintf("[%d] sending AE to %d, with args = %+v", rf.me, server, args)
+		DPrintf("me - %+v, log - %+v, commitIndex - %+v, lastApplied - %+v, nextIndex %+v, matchIndex %+v", rf.me, rf.log, rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex)
+	}
 	rf.mu.Unlock()
 	ok := rf.sendAppendEntry(server, &args, &reply)
 
@@ -341,10 +341,17 @@ func (rf *Raft) CallAppendEntry(server int) {
 		rf.BecomeFollower(reply.Term)
 	} else if !reply.Success {
 		rf.nextIndex[server] -= 1
-	} else if len(rf.log)-1 > rf.matchIndex[server] && args.Entry.Command != nil {
-		rf.nextIndex[server]++
-		rf.matchIndex[server]++
+	} else if args.Entry.Command == nil {
+		rf.matchIndex[server] = args.PrevLogIndex
+		rf.nextIndex[server] = rf.matchIndex[server] + 1
+	} else {
+		rf.matchIndex[server] = args.PrevLogIndex + 1
+		rf.nextIndex[server] = rf.matchIndex[server] + 1
 	}
+	// } else if len(rf.log)-1 > rf.matchIndex[server] && args.Entry.Command != nil {
+	// 	rf.nextIndex[server]++
+	// 	rf.matchIndex[server]++
+	// }
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
@@ -359,6 +366,7 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 	}
 
 	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+		DPrintf("(%d) rf.log[args.PrevLogIndex].Term != args.PrevLogTerm", rf.me)
 		rf.log = rf.log[:args.PrevLogIndex]
 		return
 	}
@@ -383,7 +391,7 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 		rf.applyCh <- applyMsg
 	}
 
-	DPrintf("(%d) recieved AE from [%d] and now my log is and commitIndex is %d ", rf.me, args.LeaderId, rf.commitIndex)
+	DPrintf("(%d) recieved AE from [%d] and now my log is %v and commitIndex is %d ", rf.me, args.LeaderId, rf.log, rf.commitIndex)
 	reply.Success = true
 	rf.BecomeFollower(args.Term)
 }
@@ -425,6 +433,9 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.votedFor = args.CandidateId
 		reply.Granted = true
 		reply.Term = args.Term
+	} else if args.Term > rf.currentTerm {
+		rf.BecomeFollower(args.Term)
+		reply.Term = args.Term
 	}
 
 }
@@ -450,10 +461,10 @@ func (rf *Raft) AttempElection() {
 
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
-			DPrintf("[%d] recieved vote from - %d", rf.me, server)
 			if rf.state != Candidate {
 				return
 			}
+			DPrintf("[%d] recieved vote from - %d", rf.me, server)
 			count++
 			if count >= len(rf.peers)/2+1 {
 				rf.BecomeLeader()
@@ -556,7 +567,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		return index, term, false
 	}
 
-	DPrintf("START - [%d] recieved command", rf.me)
+	DPrintf("START - [%d] recieved command %+v", rf.me, command)
 	term = rf.currentTerm
 	index = len(rf.log)
 
