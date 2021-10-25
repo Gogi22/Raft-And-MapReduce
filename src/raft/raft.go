@@ -27,9 +27,9 @@ import (
 )
 
 const (
-	ElectionTime  = 1150
+	ElectionTime  = 900
 	HeartbeatTime = 130
-	Spread        = 300
+	Spread        = 500
 )
 
 // import "bytes"
@@ -190,14 +190,14 @@ func GenerateSeed() *rand.Rand {
 	return r1
 }
 
-func (rf *Raft) BecomeFollower(term int) {
+func (rf *Raft) BecomeFollower(term, votedFor int) {
 	r1 := GenerateSeed()
 	rf.state = Follower
 	rf.currentTerm = term
 	rf.waitTime = time.Duration(ElectionTime+r1.Intn(Spread)) * time.Millisecond
 	rf.timerStart = time.Now()
+	rf.votedFor = votedFor
 	DPrintf("TIME for (%d), waitTime - %v, timerStart - %v", rf.me, rf.waitTime, rf.timerStart)
-	rf.votedFor = -1
 }
 
 func (rf *Raft) BecomeCandidate() {
@@ -341,7 +341,7 @@ func (rf *Raft) CallAppendEntry(server, term int) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if reply.Term > rf.currentTerm {
-		rf.BecomeFollower(reply.Term)
+		rf.BecomeFollower(reply.Term, -1)
 	} else if !reply.Success {
 		rf.nextIndex[server] -= 1
 	} else if args.Entry.Command == nil {
@@ -399,7 +399,7 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 
 	DPrintf("(%d) recieved AE from [%d] and now my log is %v and commitIndex is %d ", rf.me, args.LeaderId, rf.log, rf.commitIndex)
 	reply.Success = true
-	rf.BecomeFollower(args.Term)
+	rf.BecomeFollower(args.Term, rf.votedFor)
 }
 
 func (rf *Raft) ElectionTicker() {
@@ -439,8 +439,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if (args.LastLogTerm == rf.log[len(rf.log)-1].Term && args.LastLogIndex >= len(rf.log)-1) || args.LastLogTerm > rf.log[len(rf.log)-1].Term {
 		if rf.votedFor == -1 || rf.votedFor == args.CandidateId || args.Term > rf.currentTerm {
 			DPrintf("[%d] i voted for %d", rf.me, args.CandidateId)
-			rf.BecomeFollower(args.Term)
-			rf.votedFor = args.CandidateId
+			rf.BecomeFollower(args.Term, args.CandidateId)
 			reply.Granted = true
 			reply.Term = args.Term
 			return
@@ -516,7 +515,7 @@ func (rf *Raft) CallRequestVote(server int) bool {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if reply.Term > rf.currentTerm {
-		rf.BecomeFollower(reply.Term)
+		rf.BecomeFollower(reply.Term, -1)
 	}
 	return false
 }
