@@ -27,9 +27,9 @@ import (
 )
 
 const (
-	ElectionTime  = 900
-	HeartbeatTime = 130
-	Spread        = 500
+	ElectionTime  = 500
+	HeartbeatTime = 100
+	Spread        = 400
 )
 
 // import "bytes"
@@ -92,7 +92,7 @@ type AppendEntryArgs struct {
 
 	PrevLogIndex int
 	PrevLogTerm  int
-	Entry        LogEntry
+	Entries      []LogEntry
 	LeaderCommit int
 }
 
@@ -240,9 +240,10 @@ func (rf *Raft) HeartbeatTicker() {
 }
 
 func (rf *Raft) GetPrevLog(server, term int) AppendEntryArgs {
-	var entry LogEntry
+	entries := make([]LogEntry, 0)
 	if rf.matchIndex[server]+1 == rf.nextIndex[server] && rf.nextIndex[server] <= len(rf.log)-1 {
-		entry = rf.log[rf.nextIndex[server]]
+		entries = append(entries, rf.log[rf.nextIndex[server]:]...)
+
 	}
 
 	args := AppendEntryArgs{
@@ -250,7 +251,7 @@ func (rf *Raft) GetPrevLog(server, term int) AppendEntryArgs {
 		LeaderId:     rf.me,
 		PrevLogIndex: rf.log[rf.nextIndex[server]-1].Index,
 		PrevLogTerm:  rf.log[rf.nextIndex[server]-1].Term,
-		Entry:        entry,
+		Entries:      entries,
 		LeaderCommit: rf.commitIndex,
 	}
 
@@ -306,11 +307,11 @@ func (rf *Raft) SendHeartbeats() {
 				rf.commitIndex = idx
 			}
 
-			if rf.commitIndex > rf.lastApplied {
+			for rf.commitIndex > rf.lastApplied {
 				rf.lastApplied++
 				applyMsg := ApplyMsg{
 					CommandValid: true,
-					CommandIndex: idx,
+					CommandIndex: rf.lastApplied,
 					Command:      rf.log[rf.lastApplied].Command,
 				}
 				// DPrintf("COMMITED: sending %+v msg to tester", applyMsg)
@@ -326,7 +327,7 @@ func (rf *Raft) CallAppendEntry(server, term int) {
 	var reply AppendEntryReply
 	rf.mu.Lock()
 	args := rf.GetPrevLog(server, term)
-	if args.Entry.Command != nil {
+	if len(args.Entries) != 0 {
 		DPrintf("[%d] sending AE to %d, with args = %+v", rf.me, server, args)
 		DPrintf("me - %d, log - %v, commitIndex - %d, lastApplied - %d, nextIndex %+v, matchIndex %+v", rf.me, rf.log, rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex)
 	} else {
@@ -345,18 +346,11 @@ func (rf *Raft) CallAppendEntry(server, term int) {
 		rf.BecomeFollower(reply.Term, -1)
 	} else if !reply.Success {
 		rf.nextIndex[server] -= 1
-	} else if args.Entry.Command == nil {
-		rf.matchIndex[server] = args.PrevLogIndex
-		rf.nextIndex[server] = rf.matchIndex[server] + 1
 	} else {
 		// DPrintf("[%d] my command %v was recorded by %d", rf.me, args.Entry.Command, server)
-		rf.matchIndex[server] = args.PrevLogIndex + 1
+		rf.matchIndex[server] = args.PrevLogIndex + len(args.Entries)
 		rf.nextIndex[server] = rf.matchIndex[server] + 1
 	}
-	// } else if len(rf.log)-1 > rf.matchIndex[server] && args.Entry.Command != nil {
-	// 	rf.nextIndex[server]++
-	// 	rf.matchIndex[server]++
-	// }
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
@@ -382,12 +376,12 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 		return
 	}
 
-	if args.Entry.Index > 0 && len(rf.log)-1 >= args.Entry.Index {
-		rf.log = rf.log[:args.Entry.Index]
+	if len(args.Entries) != 0 && args.Entries[0].Index > 0 && len(rf.log)-1 >= args.Entries[0].Index {
+		rf.log = rf.log[:args.Entries[0].Index]
 	}
 
-	if args.Entry.Command != nil {
-		rf.log = append(rf.log, args.Entry)
+	if len(args.Entries) != 0 {
+		rf.log = append(rf.log, args.Entries...)
 	}
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = Min(args.LeaderCommit, args.PrevLogIndex)
