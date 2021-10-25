@@ -27,9 +27,9 @@ import (
 )
 
 const (
-	ElectionTime  = 950
-	HeartbeatTime = 150
-	Spread        = 250
+	ElectionTime  = 1150
+	HeartbeatTime = 130
+	Spread        = 300
 )
 
 // import "bytes"
@@ -196,6 +196,7 @@ func (rf *Raft) BecomeFollower(term int) {
 	rf.currentTerm = term
 	rf.waitTime = time.Duration(ElectionTime+r1.Intn(Spread)) * time.Millisecond
 	rf.timerStart = time.Now()
+	DPrintf("TIME for (%d), waitTime - %v, timerStart - %v", rf.me, rf.waitTime, rf.timerStart)
 	rf.votedFor = -1
 }
 
@@ -347,6 +348,7 @@ func (rf *Raft) CallAppendEntry(server, term int) {
 		rf.matchIndex[server] = args.PrevLogIndex
 		rf.nextIndex[server] = rf.matchIndex[server] + 1
 	} else {
+		// DPrintf("[%d] my command %v was recorded by %d", rf.me, args.Entry.Command, server)
 		rf.matchIndex[server] = args.PrevLogIndex + 1
 		rf.nextIndex[server] = rf.matchIndex[server] + 1
 	}
@@ -377,17 +379,15 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 		rf.log = rf.log[:args.Entry.Index]
 	}
 
-	// if len(rf.log)-1 == args.Entry.Index {
-	// 	rf.log = rf.log[:args.Entry.Index]
-	// }
 	if args.Entry.Command != nil {
 		rf.log = append(rf.log, args.Entry)
 	}
 	if args.LeaderCommit > rf.commitIndex {
-		rf.commitIndex = Min(args.LeaderCommit, len(rf.log)-1)
+		rf.commitIndex = Min(args.LeaderCommit, args.PrevLogIndex)
 	}
 
-	if rf.commitIndex > rf.lastApplied {
+	for rf.commitIndex > rf.lastApplied {
+		DPrintf("[%d] about to apply Entry - %+v, prevLogIndex - %d, prevLogTerm - %d", rf.me, args.Entry, args.PrevLogIndex, args.PrevLogTerm)
 		rf.lastApplied++
 		applyMsg := ApplyMsg{
 			CommandValid: true,
@@ -409,6 +409,7 @@ func (rf *Raft) ElectionTicker() {
 		}
 		rf.mu.Lock()
 		if rf.state != Leader && time.Since(rf.timerStart) > rf.waitTime {
+			DPrintf("START ELECTION for %d, time now is %v", rf.me, time.Now())
 			go rf.AttempElection()
 			r1 := GenerateSeed()
 			rf.waitTime = time.Duration(ElectionTime+r1.Intn(Spread)) * time.Millisecond
@@ -434,15 +435,26 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 
 	// or args.LastLogTerm >= rf.log[len(rf.log)-1].Term
-	if (rf.votedFor == -1 || rf.votedFor == args.CandidateId || args.Term > rf.currentTerm) && args.LastLogIndex >= len(rf.log)-1 {
-		rf.BecomeFollower(args.Term)
-		rf.votedFor = args.CandidateId
-		reply.Granted = true
-		reply.Term = args.Term
-	} else if args.Term > rf.currentTerm {
-		rf.BecomeFollower(args.Term)
-		reply.Term = args.Term
+	// if (rf.votedFor == -1 || rf.votedFor == args.CandidateId || args.Term > rf.currentTerm) && args.LastLogIndex >= len(rf.log)-1 {
+	if (args.LastLogTerm == rf.log[len(rf.log)-1].Term && args.LastLogIndex >= len(rf.log)-1) || args.LastLogTerm > rf.log[len(rf.log)-1].Term {
+		if rf.votedFor == -1 || rf.votedFor == args.CandidateId || args.Term > rf.currentTerm {
+			DPrintf("[%d] i voted for %d", rf.me, args.CandidateId)
+			rf.BecomeFollower(args.Term)
+			rf.votedFor = args.CandidateId
+			reply.Granted = true
+			reply.Term = args.Term
+			return
+		}
 	}
+	if args.Term > rf.currentTerm {
+		DPrintf("[%d] i voted for %d - second if statement", rf.me, args.CandidateId)
+		reply.Term = args.Term
+		rf.state = Follower
+		rf.currentTerm = args.Term
+		rf.votedFor = -1
+		return
+	}
+	DPrintf("[%d] i didn't vote for %d", rf.me, args.CandidateId)
 
 }
 
