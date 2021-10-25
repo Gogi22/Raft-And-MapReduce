@@ -197,7 +197,7 @@ func (rf *Raft) BecomeFollower(term, votedFor int) {
 	rf.waitTime = time.Duration(ElectionTime+r1.Intn(Spread)) * time.Millisecond
 	rf.timerStart = time.Now()
 	rf.votedFor = votedFor
-	DPrintf("TIME for (%d), waitTime - %v, timerStart - %v", rf.me, rf.waitTime, rf.timerStart)
+	// DPrintf("TIME for (%d), waitTime - %v, timerStart - %v", rf.me, rf.waitTime, rf.timerStart)
 }
 
 func (rf *Raft) BecomeCandidate() {
@@ -273,7 +273,6 @@ func (rf *Raft) SendHeartbeats() {
 				return
 			}
 
-			DPrintf("[%d] sending AE to %d with Term %d", rf.me, server, rf.currentTerm)
 			rf.mu.Unlock()
 			rf.CallAppendEntry(server, term)
 
@@ -329,7 +328,9 @@ func (rf *Raft) CallAppendEntry(server, term int) {
 	args := rf.GetPrevLog(server, term)
 	if args.Entry.Command != nil {
 		DPrintf("[%d] sending AE to %d, with args = %+v", rf.me, server, args)
-		DPrintf("me - %+v, log - %+v, commitIndex - %+v, lastApplied - %+v, nextIndex %+v, matchIndex %+v", rf.me, rf.log, rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex)
+		DPrintf("me - %d, log - %v, commitIndex - %d, lastApplied - %d, nextIndex %+v, matchIndex %+v", rf.me, rf.log, rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex)
+	} else {
+		DPrintf("[%d] sending AE to %d with Term %d", rf.me, server, term)
 	}
 	rf.mu.Unlock()
 	ok := rf.sendAppendEntry(server, &args, &reply)
@@ -365,13 +366,19 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 	// DPrintf("[%d] Recieved Append Entry from (%d), args is %v", rf.me, args.LeaderId, args)
 	reply.Term = rf.currentTerm
 	reply.Success = false
-	if args.Term < rf.currentTerm || len(rf.log)-1 < args.PrevLogIndex {
+	if args.Term < rf.currentTerm {
+		return
+	}
+
+	if len(rf.log)-1 < args.PrevLogIndex {
+		rf.BecomeFollower(args.Term, rf.votedFor)
 		return
 	}
 
 	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
-		DPrintf("(%d) rf.log[args.PrevLogIndex].Term != args.PrevLogTerm", rf.me)
+		DPrintf("(%d) rf.log[args.PrevLogIndex].Term != args.PrevLogTerm, PrevLogIndex  = %d", rf.me, args.PrevLogIndex)
 		rf.log = rf.log[:args.PrevLogIndex]
+		rf.BecomeFollower(args.Term, rf.votedFor)
 		return
 	}
 
@@ -387,7 +394,7 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 	}
 
 	for rf.commitIndex > rf.lastApplied {
-		DPrintf("[%d] about to apply Entry - %+v, prevLogIndex - %d, prevLogTerm - %d", rf.me, args.Entry, args.PrevLogIndex, args.PrevLogTerm)
+		DPrintf("[%d] about to apply, prevLogIndex - %d, prevLogTerm - %d", rf.me, args.PrevLogIndex, args.PrevLogTerm)
 		rf.lastApplied++
 		applyMsg := ApplyMsg{
 			CommandValid: true,
@@ -409,7 +416,7 @@ func (rf *Raft) ElectionTicker() {
 		}
 		rf.mu.Lock()
 		if rf.state != Leader && time.Since(rf.timerStart) > rf.waitTime {
-			DPrintf("START ELECTION for %d, time now is %v", rf.me, time.Now())
+			// DPrintf("START ELECTION for %d, time now is %v", rf.me, time.Now())
 			go rf.AttempElection()
 			r1 := GenerateSeed()
 			rf.waitTime = time.Duration(ElectionTime+r1.Intn(Spread)) * time.Millisecond
@@ -427,7 +434,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	DPrintf("(%d) recieved RequestVote from [%d] with the Term of -- %d and my Term %d, and I'have voted for %d", rf.me, args.CandidateId, args.Term, rf.currentTerm, rf.votedFor)
-	// DPrintf("[%d] recieved RequestVote from (%d) with the Term of -- %d and my Term %d, and I'have voted for %d", rf.me, args.CandidateId, args.Term, rf.currentTerm, rf.votedFor)
 	reply.Granted = false
 	reply.Term = rf.currentTerm
 	if args.Term < rf.currentTerm {
@@ -438,7 +444,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// if (rf.votedFor == -1 || rf.votedFor == args.CandidateId || args.Term > rf.currentTerm) && args.LastLogIndex >= len(rf.log)-1 {
 	if (args.LastLogTerm == rf.log[len(rf.log)-1].Term && args.LastLogIndex >= len(rf.log)-1) || args.LastLogTerm > rf.log[len(rf.log)-1].Term {
 		if rf.votedFor == -1 || rf.votedFor == args.CandidateId || args.Term > rf.currentTerm {
-			DPrintf("[%d] i voted for %d", rf.me, args.CandidateId)
+			// DPrintf("[%d] i voted for %d", rf.me, args.CandidateId)
 			rf.BecomeFollower(args.Term, args.CandidateId)
 			reply.Granted = true
 			reply.Term = args.Term
@@ -446,14 +452,14 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		}
 	}
 	if args.Term > rf.currentTerm {
-		DPrintf("[%d] i voted for %d - second if statement", rf.me, args.CandidateId)
+		DPrintf("[%d] i didn't vote for %d - second if statement", rf.me, args.CandidateId)
 		reply.Term = args.Term
 		rf.state = Follower
 		rf.currentTerm = args.Term
 		rf.votedFor = -1
 		return
 	}
-	DPrintf("[%d] i didn't vote for %d", rf.me, args.CandidateId)
+	// DPrintf("[%d] i didn't vote for %d", rf.me, args.CandidateId)
 
 }
 
