@@ -194,13 +194,15 @@ func GenerateSeed() *rand.Rand {
 	return r1
 }
 
-func (rf *Raft) BecomeFollower(term, votedFor int) {
-	r1 := GenerateSeed()
+func (rf *Raft) BecomeFollower(term, votedFor int, resetTime bool) {
 	rf.state = Follower
 	rf.currentTerm = term
-	rf.waitTime = time.Duration(ElectionTime+r1.Intn(Spread)) * time.Millisecond
-	rf.timerStart = time.Now()
 	rf.votedFor = votedFor
+	if resetTime {
+		r1 := GenerateSeed()
+		rf.waitTime = time.Duration(ElectionTime+r1.Intn(Spread)) * time.Millisecond
+		rf.timerStart = time.Now()
+	}
 	// DPrintf("TIME for (%d), waitTime - %v, timerStart - %v", rf.me, rf.waitTime, rf.timerStart)
 }
 
@@ -356,7 +358,7 @@ func (rf *Raft) CallAppendEntry(server, term int) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if reply.Term > rf.currentTerm {
-		rf.BecomeFollower(reply.Term, -1)
+		rf.BecomeFollower(reply.Term, -1, false)
 	} else if !reply.Success {
 		rf.nextIndex[server] -= 1
 	} else {
@@ -378,14 +380,14 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 	}
 
 	if len(rf.log)-1 < args.PrevLogIndex {
-		rf.BecomeFollower(args.Term, rf.votedFor)
+		rf.BecomeFollower(args.Term, rf.votedFor, true)
 		return
 	}
 
 	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 		DPrintf("(%d) rf.log[args.PrevLogIndex].Term != args.PrevLogTerm, PrevLogIndex  = %d", rf.me, args.PrevLogIndex)
 		rf.log = rf.log[:args.PrevLogIndex]
-		rf.BecomeFollower(args.Term, rf.votedFor)
+		rf.BecomeFollower(args.Term, rf.votedFor, true)
 		return
 	}
 
@@ -413,7 +415,7 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 
 	DPrintf("(%d) recieved AE from [%d] and now my log is %v and commitIndex is %d ", rf.me, args.LeaderId, rf.log, rf.commitIndex)
 	reply.Success = true
-	rf.BecomeFollower(args.Term, rf.votedFor)
+	rf.BecomeFollower(args.Term, rf.votedFor, true)
 }
 
 func (rf *Raft) ElectionTicker() {
@@ -452,7 +454,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if (args.LastLogTerm == rf.log[len(rf.log)-1].Term && args.LastLogIndex >= len(rf.log)-1) || args.LastLogTerm > rf.log[len(rf.log)-1].Term {
 		if rf.votedFor == -1 || rf.votedFor == args.CandidateId || args.Term > rf.currentTerm {
 			// DPrintf("[%d] i voted for %d", rf.me, args.CandidateId)
-			rf.BecomeFollower(args.Term, args.CandidateId)
+			rf.BecomeFollower(args.Term, args.CandidateId, true)
 			reply.Granted = true
 			reply.Term = args.Term
 			return
@@ -528,7 +530,7 @@ func (rf *Raft) CallRequestVote(server int) bool {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if reply.Term > rf.currentTerm {
-		rf.BecomeFollower(reply.Term, -1)
+		rf.BecomeFollower(reply.Term, -1, false)
 	}
 	return false
 }
@@ -645,31 +647,30 @@ func (rf *Raft) killed() bool {
 // Make() must return quickly, so it should start goroutines
 // for any long-running work.
 //
+
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 	DPrintf("Created Peer %d", me)
-	r1 := GenerateSeed()
 
 	rf := &Raft{}
 	rf.applyCh = applyCh
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
-	rf.state = Candidate
-	rf.waitTime = time.Duration(ElectionTime+r1.Intn(Spread)) * time.Millisecond
-	rf.timerStart = time.Now()
-
 	rf.currentTerm = 0
 	rf.votedFor = -1
+
 	rf.log = make([]LogEntry, 1)
 
 	rf.commitIndex = 0
 	rf.lastApplied = 0
+
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
-
 	rf.sendAE = false
+
 	// Your initialization code here (2A, 2B, 2C).
+	rf.BecomeCandidate()
 	go rf.ElectionTicker()
 
 	// initialize from state persisted before a crash
