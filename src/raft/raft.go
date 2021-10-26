@@ -27,9 +27,11 @@ import (
 )
 
 const (
-	ElectionTime  = 500
-	HeartbeatTime = 100
-	Spread        = 400
+	ElectionTime    = 600
+	HeartbeatTime   = 130
+	Spread          = 400
+	IdleForElection = 30
+	IdleForHearbeat = 65
 )
 
 // import "bytes"
@@ -83,7 +85,9 @@ type Raft struct {
 	nextIndex  []int
 	matchIndex []int
 
-	applyCh chan ApplyMsg
+	applyCh    chan ApplyMsg
+	sendAE     bool
+	lastSentAE time.Time
 }
 
 type AppendEntryArgs struct {
@@ -221,6 +225,8 @@ func (rf *Raft) BecomeLeader() {
 		rf.matchIndex[i] = 0
 	}
 	rf.timerStart = time.Now()
+	rf.sendAE = true
+	rf.lastSentAE = time.Now()
 	// start heartbeats
 	go rf.HeartbeatTicker()
 }
@@ -232,10 +238,13 @@ func (rf *Raft) HeartbeatTicker() {
 			rf.mu.Unlock()
 			return
 		}
+		if rf.sendAE || time.Since(rf.lastSentAE) > HeartbeatTime {
+			rf.sendAE = false
+			rf.lastSentAE = time.Now()
+			go rf.SendHeartbeats()
+		}
 		rf.mu.Unlock()
-		go rf.SendHeartbeats()
-		time.Sleep(HeartbeatTime * time.Millisecond)
-
+		time.Sleep(IdleForHearbeat * time.Millisecond)
 	}
 }
 
@@ -303,8 +312,10 @@ func (rf *Raft) SendHeartbeats() {
 				}
 			}
 
+			commited := false
 			if idx > rf.commitIndex {
 				rf.commitIndex = idx
+				commited = true
 			}
 
 			for rf.commitIndex > rf.lastApplied {
@@ -316,7 +327,9 @@ func (rf *Raft) SendHeartbeats() {
 				}
 				// DPrintf("COMMITED: sending %+v msg to tester", applyMsg)
 				rf.applyCh <- applyMsg
-				// go rf.SendHeartbeats()
+			}
+			if commited {
+				rf.sendAE = true
 			}
 
 		}(server)
@@ -417,7 +430,7 @@ func (rf *Raft) ElectionTicker() {
 			rf.timerStart = time.Now()
 		}
 		rf.mu.Unlock()
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(IdleForElection * time.Millisecond)
 	}
 }
 
@@ -595,6 +608,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	}
 
 	rf.log = append(rf.log, logEntry)
+	rf.sendAE = true
 	// DPrintf("start return values %d, %d, %v", index, term, isLeader)
 	return index, term, isLeader
 }
@@ -651,10 +665,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.commitIndex = 0
 	rf.lastApplied = 0
-
 	rf.nextIndex = make([]int, len(peers))
 	rf.matchIndex = make([]int, len(peers))
 
+	rf.sendAE = false
 	// Your initialization code here (2A, 2B, 2C).
 	go rf.ElectionTicker()
 
