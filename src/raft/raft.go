@@ -379,11 +379,13 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 		return
 	}
 
+	// Figure2 2
 	if len(rf.log)-1 < args.PrevLogIndex {
 		rf.BecomeFollower(args.Term, rf.votedFor, true)
 		return
 	}
 
+	// Figure2 3
 	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 		DPrintf("(%d) rf.log[args.PrevLogIndex].Term != args.PrevLogTerm, PrevLogIndex  = %d", rf.me, args.PrevLogIndex)
 		rf.log = rf.log[:args.PrevLogIndex]
@@ -391,12 +393,16 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 		return
 	}
 
-	if len(args.Entries) != 0 && args.Entries[0].Index > 0 && len(rf.log)-1 >= args.Entries[0].Index {
-		rf.log = rf.log[:args.Entries[0].Index]
+	j := 0
+	if len(args.Entries) != 0 && args.Entries[0].Index > 0 {
+		for i := args.Entries[0].Index; i < len(rf.log); i++ {
+			rf.log[i] = args.Entries[j]
+			j += 1
+		}
 	}
 
 	if len(args.Entries) != 0 {
-		rf.log = append(rf.log, args.Entries...)
+		rf.log = append(rf.log, args.Entries[j:]...)
 	}
 	if args.LeaderCommit > rf.commitIndex {
 		rf.commitIndex = Min(args.LeaderCommit, args.PrevLogIndex)
