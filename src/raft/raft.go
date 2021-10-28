@@ -352,13 +352,14 @@ func (rf *Raft) CallAppendEntry(server, term int) {
 	rf.mu.Unlock()
 	ok := rf.sendAppendEntry(server, &args, &reply)
 
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
 	if !ok {
 		rf.matchIndex[server] = 0
 		return
 	}
 
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
 	if reply.Term > rf.currentTerm {
 		rf.BecomeFollower(reply.Term, -1, false)
 	} else if reply.Term > term {
