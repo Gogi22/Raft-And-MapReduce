@@ -353,6 +353,7 @@ func (rf *Raft) CallAppendEntry(server, term int) {
 	ok := rf.sendAppendEntry(server, &args, &reply)
 
 	if !ok {
+		rf.matchIndex[server] = 0
 		return
 	}
 
