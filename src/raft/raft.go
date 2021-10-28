@@ -220,7 +220,7 @@ func (rf *Raft) BecomeLeader() {
 	rf.state = Leader
 
 	for i := range rf.nextIndex {
-		rf.nextIndex[i] = len(rf.log)
+		rf.nextIndex[i] = rf.log[len(rf.log)-1].Index + 1
 	}
 
 	for i := range rf.matchIndex {
@@ -252,7 +252,7 @@ func (rf *Raft) HeartbeatTicker() {
 
 func (rf *Raft) GetPrevLog(server, term int) AppendEntryArgs {
 	entries := make([]LogEntry, 0)
-	if rf.matchIndex[server]+1 == rf.nextIndex[server] && rf.nextIndex[server] <= len(rf.log)-1 {
+	if rf.matchIndex[server]+1 == rf.nextIndex[server] && rf.nextIndex[server] <= rf.log[len(rf.log)-1].Index {
 		entries = append(entries, rf.log[rf.nextIndex[server]:]...)
 
 	}
@@ -291,7 +291,7 @@ func (rf *Raft) SendHeartbeats() {
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
 
-			if rf.commitIndex == len(rf.log)-1 {
+			if rf.commitIndex == rf.log[len(rf.log)-1].Index {
 				return
 			}
 
@@ -380,7 +380,7 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 	}
 
 	// Figure2 2
-	if len(rf.log)-1 < args.PrevLogIndex {
+	if rf.log[len(rf.log)-1].Index < args.PrevLogIndex {
 		rf.BecomeFollower(args.Term, rf.votedFor, true)
 		return
 	}
@@ -455,9 +455,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 
-	// or args.LastLogTerm >= rf.log[len(rf.log)-1].Term
-	// if (rf.votedFor == -1 || rf.votedFor == args.CandidateId || args.Term > rf.currentTerm) && args.LastLogIndex >= len(rf.log)-1 {
-	if (args.LastLogTerm == rf.log[len(rf.log)-1].Term && args.LastLogIndex >= len(rf.log)-1) || args.LastLogTerm > rf.log[len(rf.log)-1].Term {
+	if (args.LastLogTerm == rf.log[len(rf.log)-1].Term && args.LastLogIndex >= rf.log[len(rf.log)-1].Index) || args.LastLogTerm > rf.log[len(rf.log)-1].Term {
 		if rf.votedFor == -1 || rf.votedFor == args.CandidateId || args.Term > rf.currentTerm {
 			// DPrintf("[%d] i voted for %d", rf.me, args.CandidateId)
 			rf.BecomeFollower(args.Term, args.CandidateId, true)
@@ -519,7 +517,7 @@ func (rf *Raft) CallRequestVote(server int) bool {
 	args := RequestVoteArgs{
 		Term:         rf.currentTerm,
 		CandidateId:  rf.me,
-		LastLogIndex: len(rf.log) - 1,
+		LastLogIndex: rf.log[len(rf.log)-1].Index,
 		LastLogTerm:  rf.log[len(rf.log)-1].Term,
 	}
 	rf.mu.Unlock()
@@ -607,7 +605,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	DPrintf("START - [%d] recieved command %+v", rf.me, command)
 	term = rf.currentTerm
-	index = len(rf.log)
+	index = rf.log[len(rf.log)-1].Index + 1
 
 	logEntry := LogEntry{
 		Index:   index,
