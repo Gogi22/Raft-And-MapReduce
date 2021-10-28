@@ -28,10 +28,10 @@ import (
 
 const (
 	ElectionTime    = 600
-	HeartbeatTime   = 130
+	HeartbeatTime   = 125
 	Spread          = 400
 	IdleForElection = 30
-	IdleForHearbeat = 65
+	IdleForHearbeat = 60
 )
 
 // import "bytes"
@@ -103,6 +103,8 @@ type AppendEntryArgs struct {
 type AppendEntryReply struct {
 	Term    int
 	Success bool
+	XTerm   int
+	XIndex  int
 }
 
 type LogEntry struct {
@@ -360,7 +362,21 @@ func (rf *Raft) CallAppendEntry(server, term int) {
 	if reply.Term > rf.currentTerm {
 		rf.BecomeFollower(reply.Term, -1, false)
 	} else if !reply.Success {
-		rf.nextIndex[server] -= 1
+		if reply.XTerm == -1 && reply.XIndex != -1 {
+			rf.nextIndex[server] = reply.XIndex + 1
+		} else if reply.XTerm != -1 {
+			for i := len(rf.log) - 1; i >= 0; i-- {
+				if rf.log[i].Term == reply.XTerm {
+					reply.XIndex = rf.log[i].Index
+					break
+				} else if rf.log[i].Term < reply.XTerm {
+					break
+				}
+			}
+			rf.nextIndex[server] = reply.XIndex + 1
+		} else {
+			rf.nextIndex[server] -= 1
+		}
 	} else {
 		// DPrintf("[%d] my command %v was recorded by %d", rf.me, args.Entry.Command, server)
 		rf.matchIndex[server] = args.PrevLogIndex + len(args.Entries)
@@ -375,6 +391,8 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 	// DPrintf("[%d] Recieved Append Entry from (%d), args is %v", rf.me, args.LeaderId, args)
 	reply.Term = rf.currentTerm
 	reply.Success = false
+	reply.XTerm = -1
+	reply.XIndex = -1
 	if args.Term < rf.currentTerm {
 		return
 	}
@@ -382,13 +400,20 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 	// Figure2 2
 	if rf.log[len(rf.log)-1].Index < args.PrevLogIndex {
 		rf.BecomeFollower(args.Term, rf.votedFor, true)
+		reply.XIndex = rf.log[len(rf.log)-1].Index
 		return
 	}
 
 	// Figure2 3
 	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 		DPrintf("(%d) rf.log[args.PrevLogIndex].Term != args.PrevLogTerm, PrevLogIndex  = %d", rf.me, args.PrevLogIndex)
-		rf.log = rf.log[:args.PrevLogIndex]
+		i := len(rf.log) - 1
+		for rf.log[i].Term == rf.log[i-1].Term {
+			i -= 1
+		}
+		reply.XTerm = rf.log[i].Term
+		reply.XIndex = rf.log[i].Index
+
 		rf.BecomeFollower(args.Term, rf.votedFor, true)
 		return
 	}
@@ -396,6 +421,11 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 	j := 0
 	if len(args.Entries) != 0 && args.Entries[0].Index > 0 {
 		for i := args.Entries[0].Index; i < len(rf.log); i++ {
+			//Packet delay
+			if rf.log[i].Term != args.Entries[j].Term {
+				rf.log = rf.log[:i]
+				break
+			}
 			rf.log[i] = args.Entries[j]
 			j += 1
 		}
