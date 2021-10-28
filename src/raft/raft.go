@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	ElectionTime    = 600
+	ElectionTime    = 550
 	HeartbeatTime   = 125
 	Spread          = 400
 	IdleForElection = 30
@@ -256,7 +256,6 @@ func (rf *Raft) GetPrevLog(server, term int) AppendEntryArgs {
 	entries := make([]LogEntry, 0)
 	if rf.matchIndex[server]+1 == rf.nextIndex[server] && rf.nextIndex[server] <= rf.log[len(rf.log)-1].Index {
 		entries = append(entries, rf.log[rf.nextIndex[server]:]...)
-
 	}
 
 	args := AppendEntryArgs{
@@ -361,6 +360,8 @@ func (rf *Raft) CallAppendEntry(server, term int) {
 	defer rf.mu.Unlock()
 	if reply.Term > rf.currentTerm {
 		rf.BecomeFollower(reply.Term, -1, false)
+	} else if reply.Term > term {
+		return
 	} else if !reply.Success {
 		if reply.XTerm == -1 && reply.XIndex != -1 {
 			rf.nextIndex[server] = reply.XIndex + 1
@@ -375,6 +376,7 @@ func (rf *Raft) CallAppendEntry(server, term int) {
 			}
 			rf.nextIndex[server] = reply.XIndex + 1
 		} else {
+			DPrintf("{%d} in this clause with term - %d, with %d, XTerm - %d, XIndex - %d, Success - %v", rf.me, term, server, reply.XTerm, reply.XIndex, reply.Success)
 			rf.nextIndex[server] -= 1
 		}
 	} else {
@@ -431,7 +433,7 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 		}
 	}
 
-	if len(args.Entries) != 0 {
+	if len(args.Entries[j:]) != 0 {
 		rf.log = append(rf.log, args.Entries[j:]...)
 	}
 	if args.LeaderCommit > rf.commitIndex {
