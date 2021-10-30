@@ -211,7 +211,6 @@ func (rf *Raft) BecomeFollower(term, votedFor int, resetTime bool) {
 		rf.waitTime = time.Duration(ElectionTime+r1.Intn(Spread)) * time.Millisecond
 		rf.timerStart = time.Now()
 	}
-	// DPrintf("TIME for (%d), waitTime - %v, timerStart - %v", rf.me, rf.waitTime, rf.timerStart)
 }
 
 func (rf *Raft) BecomeCandidate() {
@@ -238,7 +237,7 @@ func (rf *Raft) BecomeLeader() {
 	rf.timerStart = time.Now()
 	rf.sendAE = true
 	rf.lastSentAE = time.Now()
-	// start heartbeats
+
 	go rf.HeartbeatTicker()
 }
 
@@ -339,7 +338,6 @@ func (rf *Raft) SendHeartbeats() {
 					CommandIndex: rf.lastApplied,
 					Command:      rf.log[rf.lastApplied].Command,
 				}
-				// DPrintf("COMMITED: sending %+v msg to tester", applyMsg)
 				rf.applyCh <- applyMsg
 			}
 			if commited {
@@ -354,7 +352,7 @@ func (rf *Raft) CallAppendEntry(server, term int) {
 	var reply AppendEntryReply
 	rf.mu.Lock()
 	args := rf.GetPrevLog(server, term)
-	if len(args.Entries) != -1 {
+	if len(args.Entries) != 0 {
 		DPrintf("[%d] sending AE to %d, with args = %+v", rf.me, server, args)
 		DPrintf("me - %d, log - %v, commitIndex - %d, lastApplied - %d, nextIndex %+v, matchIndex %+v", rf.me, rf.log, rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex)
 	} else {
@@ -393,7 +391,6 @@ func (rf *Raft) CallAppendEntry(server, term int) {
 			rf.nextIndex[server] -= 1
 		}
 	} else {
-		// DPrintf("[%d] my command %v was recorded by %d", rf.me, args.Entry.Command, server)
 		rf.matchIndex[server] = args.PrevLogIndex + len(args.Entries)
 		rf.nextIndex[server] = rf.matchIndex[server] + 1
 	}
@@ -488,7 +485,6 @@ func (rf *Raft) ElectionTicker() {
 		}
 		rf.mu.Lock()
 		if rf.state != Leader && time.Since(rf.timerStart) > rf.waitTime {
-			// DPrintf("START ELECTION for %d, time now is %v", rf.me, time.Now())
 			go rf.AttempElection()
 			r1 := GenerateSeed()
 			rf.waitTime = time.Duration(ElectionTime+r1.Intn(Spread)) * time.Millisecond
@@ -499,9 +495,6 @@ func (rf *Raft) ElectionTicker() {
 	}
 }
 
-//
-// example RequestVote RPC handler.
-//
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -514,7 +507,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	if (args.LastLogTerm == rf.log[len(rf.log)-1].Term && args.LastLogIndex >= rf.log[len(rf.log)-1].Index) || args.LastLogTerm > rf.log[len(rf.log)-1].Term {
 		if rf.votedFor == -1 || rf.votedFor == args.CandidateId || args.Term > rf.currentTerm {
-			// DPrintf("[%d] i voted for %d", rf.me, args.CandidateId)
 			rf.BecomeFollower(args.Term, args.CandidateId, true)
 			reply.Granted = true
 			reply.Term = args.Term
@@ -530,7 +522,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.persist()
 		return
 	}
-	// DPrintf("[%d] i didn't vote for %d", rf.me, args.CandidateId)
 
 }
 
@@ -547,7 +538,6 @@ func (rf *Raft) AttempElection() {
 		}
 		go func(server int) {
 			DPrintf("[%d] requests vote from - %d with the Term of -- %d", rf.me, server, term)
-			// DPrintf("[%d] requests vote from - %d", rf.me, server)
 			voteGranted := rf.CallRequestVote(server)
 			if !voteGranted {
 				return
@@ -674,7 +664,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.log = append(rf.log, logEntry)
 	rf.persist()
 	rf.sendAE = true
-	// DPrintf("start return values %d, %d, %v", index, term, isLeader)
 	return index, term, isLeader
 }
 
@@ -691,7 +680,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 //
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
-	// Your code here, if desired.
 }
 
 func (rf *Raft) killed() bool {
@@ -732,12 +720,12 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.matchIndex = make([]int, len(peers))
 	rf.sendAE = false
 
-	// Your initialization code here (2A, 2B, 2C).
 	rf.readPersist(persister.ReadRaftState())
+
 	DPrintf("{%d} i was created, votedfor = %d, currentTerm = %d, log = %+v", rf.me, rf.votedFor, rf.currentTerm, rf.log)
+
 	rf.BecomeFollower(rf.currentTerm, rf.votedFor, true)
 	go rf.ElectionTicker()
-	// initialize from state persisted before a crash
 
 	return rf
 }
