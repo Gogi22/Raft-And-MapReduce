@@ -238,13 +238,16 @@ func (rf *Raft) BecomeLeader() {
 	rf.sendAE = true
 	rf.lastSentAE = time.Now()
 
-	go rf.HeartbeatTicker()
+	go rf.HeartbeatTicker(rf.currentTerm)
 }
 
-func (rf *Raft) HeartbeatTicker() {
+func (rf *Raft) HeartbeatTicker(term int) {
 	for {
+		if rf.killed() {
+			return
+		}
 		rf.mu.Lock()
-		if rf.state != Leader || rf.killed() {
+		if rf.state != Leader || term != rf.currentTerm {
 			rf.mu.Unlock()
 			return
 		}
@@ -298,7 +301,7 @@ func (rf *Raft) SendHeartbeats() {
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
 
-			if rf.commitIndex == rf.log[len(rf.log)-1].Index {
+			if rf.currentTerm != term || rf.commitIndex == rf.log[len(rf.log)-1].Index {
 				return
 			}
 
@@ -353,8 +356,8 @@ func (rf *Raft) CallAppendEntry(server, term int) {
 	rf.mu.Lock()
 	args := rf.GetPrevLog(server, term)
 	if len(args.Entries) != 0 {
-		DPrintf("[%d] sending AE to %d, with args = %+v", rf.me, server, args)
-		DPrintf("me - %d, log - %v, commitIndex - %d, lastApplied - %d, nextIndex %+v, matchIndex %+v", rf.me, rf.log, rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex)
+		DPrintf("[%d] sending AE to %d, with args = %v", rf.me, server, args)
+		DPrintf("me - %d, log - %v, commitIndex - %d, lastApplied - %d, nextIndex %v, matchIndex %v", rf.me, rf.log, rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex)
 	} else {
 		DPrintf("[%d] sending AE to %d with Term %d", rf.me, server, term)
 	}
@@ -365,7 +368,6 @@ func (rf *Raft) CallAppendEntry(server, term int) {
 	defer rf.mu.Unlock()
 
 	if !ok {
-		rf.matchIndex[server] = 0
 		return
 	}
 
@@ -379,16 +381,13 @@ func (rf *Raft) CallAppendEntry(server, term int) {
 		} else if reply.XTerm != -1 {
 			for i := len(rf.log) - 1; i >= 0; i-- {
 				if rf.log[i].Term == reply.XTerm {
-					reply.XIndex = rf.log[i].Index
+					reply.XIndex = rf.log[i].Index + 1
 					break
 				} else if rf.log[i].Term < reply.XTerm {
 					break
 				}
 			}
 			rf.nextIndex[server] = reply.XIndex
-		} else {
-			DPrintf("{%d} in this clause with term - %d, with %d, XTerm - %d, XIndex - %d, Success - %v", rf.me, term, server, reply.XTerm, reply.XIndex, reply.Success)
-			rf.nextIndex[server] -= 1
 		}
 	} else {
 		rf.matchIndex[server] = args.PrevLogIndex + len(args.Entries)
@@ -400,7 +399,6 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	DPrintf("(%d) Recieved Append Entry from [%d]", rf.me, args.LeaderId)
-	// DPrintf("[%d] Recieved Append Entry from (%d), args is %v", rf.me, args.LeaderId, args)
 	reply.Term = rf.currentTerm
 	reply.Success = false
 	reply.XTerm = -1
@@ -419,12 +417,7 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 	// Figure2 3
 	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 		DPrintf("(%d) rf.log[args.PrevLogIndex].Term != args.PrevLogTerm, PrevLogIndex  = %d", rf.me, args.PrevLogIndex)
-		i := len(rf.log) - 1
-		for ; i >= 0; i-- {
-			if rf.log[args.PrevLogIndex].Index == rf.log[i].Index {
-				break
-			}
-		}
+		i := args.PrevLogIndex
 		for rf.log[i].Term == rf.log[i-1].Term {
 			i -= 1
 		}
@@ -438,20 +431,16 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 
 	j := 0
 	if len(args.Entries) != 0 && args.Entries[0].Index > 0 {
-		i := 0
-		for ; i < len(rf.log); i++ {
-			if args.Entries[0].Index == rf.log[i].Index {
+		i := args.Entries[0].Index
+
+		for i < len(rf.log) && j < len(args.Entries) {
+			if rf.log[i].Term != args.Entries[j].Term {
+				// Packet delay
+				rf.log = rf.log[:i]
 				break
 			}
-		}
-		for i < len(rf.log) && j < len(args.Entries) {
-			rf.log[i] = args.Entries[j]
-			i += 1
-			j += 1
-		}
-		//Packet delay
-		if i < len(rf.log) && rf.log[i].Term != rf.log[i-1].Term {
-			rf.log = rf.log[:i]
+			i++
+			j++
 		}
 	}
 
@@ -499,6 +488,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	DPrintf("(%d) recieved RequestVote from [%d] with the Term of -- %d and my Term %d, and I'have voted for %d", rf.me, args.CandidateId, args.Term, rf.currentTerm, rf.votedFor)
+
 	reply.Granted = false
 	reply.Term = rf.currentTerm
 	if args.Term < rf.currentTerm {
@@ -545,7 +535,7 @@ func (rf *Raft) AttempElection() {
 
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
-			if rf.state != Candidate {
+			if rf.state != Candidate || rf.currentTerm != term {
 				return
 			}
 			DPrintf("[%d] recieved vote from - %d", rf.me, server)
