@@ -355,12 +355,14 @@ func (rf *Raft) CallAppendEntry(server, term int) {
 	var reply AppendEntryReply
 	rf.mu.Lock()
 	args := rf.GetPrevLog(server, term)
+
 	if len(args.Entries) != 0 {
 		DPrintf("[%d] sending AE to %d, with args = %v", rf.me, server, args)
 		DPrintf("me - %d, log - %v, commitIndex - %d, lastApplied - %d, nextIndex %v, matchIndex %v", rf.me, rf.log, rf.commitIndex, rf.lastApplied, rf.nextIndex, rf.matchIndex)
 	} else {
 		DPrintf("[%d] sending AE to %d with Term %d", rf.me, server, term)
 	}
+
 	rf.mu.Unlock()
 	ok := rf.sendAppendEntry(server, &args, &reply)
 
@@ -376,9 +378,11 @@ func (rf *Raft) CallAppendEntry(server, term int) {
 	} else if reply.Term > term {
 		return
 	} else if !reply.Success {
+
 		if reply.XTerm == -1 && reply.XIndex != -1 {
 			rf.nextIndex[server] = reply.XIndex + 1
 		} else if reply.XTerm != -1 {
+
 			for i := len(rf.log) - 1; i >= 0; i-- {
 				if rf.log[i].Term == reply.XTerm {
 					reply.XIndex = rf.log[i].Index + 1
@@ -387,6 +391,7 @@ func (rf *Raft) CallAppendEntry(server, term int) {
 					break
 				}
 			}
+
 			rf.nextIndex[server] = reply.XIndex
 		}
 	} else {
@@ -399,10 +404,12 @@ func (rf *Raft) AppendEntries(args *AppendEntryArgs, reply *AppendEntryReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	DPrintf("(%d) Recieved Append Entry from [%d]", rf.me, args.LeaderId)
+
 	reply.Term = rf.currentTerm
 	reply.Success = false
 	reply.XTerm = -1
 	reply.XIndex = -1
+
 	if args.Term < rf.currentTerm {
 		return
 	}
